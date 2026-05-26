@@ -1,10 +1,58 @@
 package cmd
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
+
+func TestDegreeType_String(t *testing.T) {
+	testCases := []struct {
+		desc  string
+		dType DegreeType
+
+		want string
+	}{
+		{
+			desc:  "Celsius",
+			dType: Celsius,
+
+			want: "C",
+		},
+		{
+			desc:  "Fahrenheit",
+			dType: Forenheit,
+
+			want: "F",
+		},
+		{
+			desc:  "Kelvin",
+			dType: Kelvin,
+
+			want: "K",
+		},
+
+		{
+			desc:  "Unknown",
+			dType: 0,
+
+			want: "unknown",
+		},
+	}
+	for _, tt := range testCases {
+		t.Run(tt.desc, func(t *testing.T) {
+			got := tt.dType.String()
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("want '%s' got '%s'", tt.want, got)
+			}
+		})
+	}
+}
 
 func TestParseTempratureSys(t *testing.T) {
 	testCases := []struct {
@@ -355,6 +403,12 @@ func TestConvertFromCelsius(t *testing.T) {
 			from:    Degree{Type: Kelvin, Value: 300.0},
 			wantErr: "expected Celsius",
 		},
+		{
+			desc:    "unsaported target",
+			target:  0,
+			from:    Degree{Type: Celsius, Value: -1.0},
+			wantErr: "unsupported target type",
+		},
 	}
 
 	for _, tt := range testCases {
@@ -412,6 +466,12 @@ func TestConvertFromForenheit(t *testing.T) {
 			target:  Forenheit,
 			from:    Degree{Type: Celsius, Value: 0.0},
 			wantErr: "expected Forenheit",
+		},
+		{
+			desc:    "unsaported target",
+			target:  0,
+			from:    Degree{Type: Forenheit, Value: -1.0},
+			wantErr: "unsupported target type",
 		},
 	}
 
@@ -471,6 +531,12 @@ func TestConvertFromKelvin(t *testing.T) {
 			from:    Degree{Type: Celsius, Value: 0.0},
 			wantErr: "expected Kelvin",
 		},
+		{
+			desc:    "unsaported target",
+			target:  0,
+			from:    Degree{Type: Kelvin, Value: -1.0},
+			wantErr: "unsupported target type",
+		},
 	}
 
 	for _, tt := range testCases {
@@ -525,6 +591,124 @@ func TestConvertorMap(t *testing.T) {
 	}
 }
 
+func TestRootCmdRun(t *testing.T) {
+	tests := []struct {
+		desc        string
+		args        []string
+		setFlags    func(cmd *cobra.Command)
+		expectedOut string
+		expectedErr string
+	}{
+		{
+			desc: "success: default flags, Celsius to Fahrenheit",
+			args: []string{"100C"},
+			setFlags: func(cmd *cobra.Command) {
+				cmd.Flags().Set("target", "F")
+				cmd.Flags().Set("accuracy", "2")
+				cmd.Flags().Set("exponent", "false")
+			},
+			expectedOut: "Result: 212.00°F\n",
+		},
+		{
+			desc: "success: Fahrenheit to Celsius with accuracy 1",
+			args: []string{"32F"},
+			setFlags: func(cmd *cobra.Command) {
+				cmd.Flags().Set("target", "C")
+				cmd.Flags().Set("accuracy", "1")
+				cmd.Flags().Set("exponent", "false")
+			},
+			expectedOut: "Result: 0.0°C\n",
+		},
+		{
+			desc: "success: Kelvin to Celsius with exponent format",
+			args: []string{"300K"},
+			setFlags: func(cmd *cobra.Command) {
+				cmd.Flags().Set("target", "C")
+				cmd.Flags().Set("accuracy", "3")
+				cmd.Flags().Set("exponent", "true")
+			},
+			expectedOut: "Result: 2.685E+01°C\n",
+		},
+		{
+			desc: "success: from Kelvin to same type",
+			args: []string{"273.15K"},
+			setFlags: func(cmd *cobra.Command) {
+				cmd.Flags().Set("target", "K")
+				cmd.Flags().Set("accuracy", "2")
+				cmd.Flags().Set("exponent", "false")
+			},
+			expectedOut: "Result: 273.15°K\n",
+		},
+		{
+			desc: "success: spaces and degree symbol allowed",
+			args: []string{"-40 °C"},
+			setFlags: func(cmd *cobra.Command) {
+				cmd.Flags().Set("target", "F")
+				cmd.Flags().Set("accuracy", "0")
+				cmd.Flags().Set("exponent", "false")
+			},
+			expectedOut: "Result: -40°F\n",
+		},
+		// Error cases
+		{
+			desc:        "error: no arguments",
+			args:        []string{},
+			setFlags:    func(cmd *cobra.Command) {},
+			expectedErr: "no temperature provided",
+		},
+		{
+			desc:        "error: invalid temperature format",
+			args:        []string{"100X"},
+			setFlags:    func(cmd *cobra.Command) {},
+			expectedErr: "invalid temperature specifier",
+		},
+		{
+			desc: "error: invalid target system",
+			args: []string{"100C"},
+			setFlags: func(cmd *cobra.Command) {
+				cmd.Flags().Set("target", "X")
+			},
+			expectedErr: "invalid temperature specifier",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			cmd.Flags().StringP("target", "t", "C", "")
+			cmd.Flags().UintP("accuracy", "a", 2, "")
+			cmd.Flags().BoolP("exponent", "e", false, "")
+
+			if tt.setFlags != nil {
+				tt.setFlags(cmd)
+			}
+
+			getOutput, restore := captureStdout()
+			defer restore()
+
+			err := rootCmdRun(cmd, tt.args)
+
+			if tt.expectedErr != "" {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.expectedErr)
+				} else if !strings.Contains(err.Error(), tt.expectedErr) {
+					t.Errorf("expected error %q, got %q", tt.expectedErr, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			output := getOutput()
+			if output != tt.expectedOut {
+				t.Errorf("output mismatch:\nexpected: %q\ngot:      %q", tt.expectedOut, output)
+			}
+		})
+	}
+}
+
 func checkErr(t *testing.T, gotErr error, txt string) bool {
 	t.Helper()
 
@@ -556,4 +740,29 @@ func shortText(txt string, n int) string {
 
 	short := txt[:n] + "..."
 	return short
+}
+
+func captureStdout() (func() string, func()) {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	restore := func() {
+		w.Close()
+		os.Stdout = old
+	}
+
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		io.Copy(&buf, r)
+		close(done)
+	}()
+
+	// Return the output string and the restore function that also waits for copying.
+	return func() string {
+		restore()
+		<-done
+		return buf.String()
+	}, restore
 }
