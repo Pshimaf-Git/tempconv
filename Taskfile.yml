@@ -1,0 +1,79 @@
+# https://taskfile.dev
+
+# Taskfile for tempconv
+# Install Task: https://taskfile.dev/installation
+
+version: "3"
+
+vars:
+  BINARY_NAME: out/bin/tempconv.exe
+  MAIN_PKG: ./main.go
+  CMD_DIR: ./cmd
+
+  COVERAGE_OUT: out/coverage/coverage.out
+  COVERAGE_HTML: out/coverage/coverage.html
+
+tasks:
+  default:
+    deps: [fmt, vet, test, build]
+    desc: "Run all checks and build"
+
+  build:
+    desc: "Build the binary"
+    cmds:
+      - go build -o {{.BINARY_NAME}} {{.MAIN_PKG}}
+    generates:
+      - "{{.BINARY_NAME}}"
+
+  test:
+    desc: "Run tests"
+    cmds:
+      - go test -v {{.CMD_DIR}}/...
+
+  run:
+    desc: "Build and run the binary"
+    deps: [build]
+    cmds:
+      - ./{{.BINARY_NAME}} {{.CLI_ARGS}}
+
+  clean:
+    desc: "Remove build artifacts"
+    cmds:
+      - rm -f {{.BINARY_NAME}} {{.COVERAGE_OUT}} {{.COVERAGE_HTML}}
+
+  install:
+    desc: "Install binary to GOPATH/bin"
+    cmds:
+      - go install {{.MAIN_PKG}}
+
+  fmt:
+    desc: "Format code"
+    cmds:
+      - go fmt ./...
+
+  vet:
+    desc: "Run go vet"
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: "Run golangci-lint"
+    cmds:
+      - golangci-lint run
+
+  cover:
+    desc: "Generate test coverage report"
+    cmds:
+      - go test -coverprofile={{.COVERAGE_OUT}} {{.CMD_DIR}}/...
+      - go tool cover -func={{.COVERAGE_OUT}}
+      - go tool cover -html={{.COVERAGE_OUT}} -o {{.COVERAGE_HTML}}
+
+  watch:
+    desc: "Watch for changes and run tests (requires entr)"
+    cmds:
+      - find . -name '*.go' | entr -r go test ./...
+
+  help:
+    desc: "Show available tasks"
+    cmds:
+      - task --list
