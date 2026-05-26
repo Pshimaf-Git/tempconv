@@ -6,6 +6,7 @@ A command-line tool for converting temperatures between Celsius, Fahrenheit, and
 
 ```bash
 go install github.com/Pshimaf-Git/tempconv@latest
+```
 
 Or clone and build:
 
